@@ -3,10 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
 )
+
+// Used as a buffer to hold vehicles until they are inserted in the db
+var jobQueue = make(chan VehicleData, 1000)
 
 // Mock database using a map for now
 var database = make(map[int]VehicleData)
@@ -38,14 +42,8 @@ func handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	databaseMutex.Lock()
-	database[vehicle.VehicleID] = vehicle
-	fmt.Println(database) // Printing in critical section, latency bottleneck. Remove in production
-	databaseMutex.Unlock()
-	
-	if vehicle.Speed > 80 {
-		fmt.Printf("\n⚠️ [ALERT] Vehicle %d is speeding! Speed: %.1f", vehicle.VehicleID, vehicle.Speed)
-	}
+	// handle the storing of data concurrently in a seperate goroutine
+	jobQueue <- vehicle
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -53,5 +51,18 @@ func handleTelemetry(w http.ResponseWriter, r *http.Request) {
 func main() {
 	http.HandleFunc("/telemetry", handleTelemetry)
 
-	http.ListenAndServe(":8080", nil)
+	go func() {
+		for vehicle := range jobQueue {
+			databaseMutex.Lock()
+			database[vehicle.VehicleID] = vehicle
+			databaseMutex.Unlock()
+
+			if vehicle.Speed > 80 {
+				fmt.Printf("⚠️ [ALERT] Vehicle %d is speeding! Speed: %.1f km/h\n", vehicle.VehicleID, vehicle.Speed)
+			}
+		}
+	}()
+
+	fmt.Println("Server running on :8080...")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }

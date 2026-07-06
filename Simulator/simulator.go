@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"time"
@@ -18,8 +19,9 @@ type VehicleData struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-// Simulate a moving vehicle changing metrics per second
+// Simulate a moving vehicle, changing its metrics every second
 func worker(vehicleChannel chan<- VehicleData, startData VehicleData) {
+	// Physical speed limitations of vehicles 
 	const maxSpeed = 120.0
 	const minSpeed = 0.0
 	const maxAcceleration = 5.0
@@ -70,20 +72,25 @@ func main() {
 
 	// Fetch data from the channel and send it to POST/telemetry
 	for data := range vehicleChannel {
-		fmt.Println("Sending data for Vehicle:", data.VehicleID)
+		// Launch a goroutine for requesting the api concurrently
+		go func(d VehicleData) {
+			fmt.Println("Sending data for Vehicle:", data.VehicleID)
 
-		jsonData, err := json.Marshal(data)
-		if err != nil {
-			fmt.Println("Error marshalling JSON:", err)
-			continue
-		}
+			jsonData, err := json.Marshal(data)
+			if err != nil {
+				fmt.Println("Error marshalling JSON:", err)
+				return
+			}
 
-		resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
-		if err != nil {
-			fmt.Println("Error sending POST:", err)
-			continue
-		}
+			resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+			if err != nil {
+				fmt.Println("Error sending POST:", err)
+				return
+			}
 
-		resp.Body.Close()
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}(data)
+
 	}
 }
