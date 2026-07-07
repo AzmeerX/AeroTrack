@@ -1,0 +1,15 @@
+services:
+  postgres_db:
+    image: postgres:15-alpine
+    container_name: telemetry_db
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=telemetry
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

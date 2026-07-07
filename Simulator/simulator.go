@@ -74,9 +74,9 @@ func main() {
 	for data := range vehicleChannel {
 		// Launch a goroutine for requesting the api concurrently
 		go func(d VehicleData) {
-			fmt.Println("Sending data for Vehicle:", data.VehicleID)
+			fmt.Println("Sending data for Vehicle:", d.VehicleID)
 
-			jsonData, err := json.Marshal(data)
+			jsonData, err := json.Marshal(d)
 			if err != nil {
 				fmt.Println("Error marshalling JSON:", err)
 				return
