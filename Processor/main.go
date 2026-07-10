@@ -9,7 +9,9 @@ import (
 	"time"
 
 	// Import Kafka package
+	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
+
 	// Import PostgreSQL driver
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -51,7 +53,18 @@ func main() {
 	defer kafkaReader.Close()
 	fmt.Println("Processor listening for events on 'telemetry_topic'")
 
-	// Prepare the database insert statement ahead of time for performance
+	rdb := redis.NewClient(&redis.Options{
+		Addr: "127.0.0.1:6379", // Use 127.0.0.1 for WSL
+	})
+
+	ctxStartup, cancelStartup := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelStartup()
+	if err := rdb.Ping(ctxStartup).Err(); err != nil {
+		log.Fatalf("Unable to connect to Redis container: %v\n", err)
+	}
+	fmt.Println("Processor connected to Redis")
+
+	// Prepare the database insert statement early for performance
 	query := `
 		INSERT INTO telemetry_history (vehicle_id, latitude, longitude, speed, timestamp) 
 		VALUES ($1, $2, $3, $4, $5)
@@ -64,28 +77,39 @@ func main() {
 
 	// Continuous Consumption Loop
 	for {
-		// A. Pull raw message slice out of the Kafka broker log stream
 		msg, err := kafkaReader.ReadMessage(context.Background())
 		if err != nil {
 			fmt.Printf("Error reading from Kafka stream: %v\n", err)
 			continue
 		}
 
-		// B. Unmarshal the raw JSON payload back into a safe internal struct
 		var vehicle VehicleData
 		if err := json.Unmarshal(msg.Value, &vehicle); err != nil {
-			fmt.Printf("Error parsing internal payload string to JSON: %v\n", err)
+			fmt.Printf("Error parsing JSON: %v\n", err)
 			continue
 		}
 
-		// C. Execute insertion parameters into the indexed PostgreSQL records
+		// Save to PostgreSQL history table
 		_, err = stmt.Exec(vehicle.VehicleID, vehicle.Latitude, vehicle.Longitude, vehicle.Speed, vehicle.Timestamp)
 		if err != nil {
 			fmt.Printf("Database Save Failure for Vehicle %d: %v\n", vehicle.VehicleID, err)
 			continue
 		}
-
-		// D. Log success acknowledgment to console
 		fmt.Printf("Processed and saved tracking data for Vehicle ID: %d\n", vehicle.VehicleID)
+
+		// Create a short-lived context purely for the Redis cache operation
+		redisCtx, redisCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+
+		redisKey := fmt.Sprintf("vehicle:latest:%d", vehicle.VehicleID)
+
+		// Cache optimization: Save the full message payload
+		err = rdb.Set(redisCtx, redisKey, msg.Value, 0).Err()
+
+		// Cancel the loop context to prevent memory/goroutine leaks
+		redisCancel()
+
+		if err != nil {
+			fmt.Printf("Redis Cache Save Failed for Vehicle %d: %v\n", vehicle.VehicleID, err)
+		}
 	}
 }
