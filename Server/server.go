@@ -47,6 +47,7 @@ func handleTelemetry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = kafkaWriter.WriteMessages(r.Context(), kafka.Message{
+		Key:   []byte(strconv.Itoa(vehicle.VehicleID)), // Hash the ID to lock it to a partition
 		Value: payload,
 	})
 	if err != nil {

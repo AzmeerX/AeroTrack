@@ -44,11 +44,11 @@ func main() {
 
 	// Configure the Kafka Consumer Reader
 	kafkaReader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:   []string{"127.0.0.1:9092"},
-		Topic:     "telemetry_topic",
-		Partition: 0,
-		MinBytes:  1,    // 1 byte to instantly consume low-frequency individual pings
-		MaxBytes:  10e6, // 10MB
+		Brokers:  []string{"127.0.0.1:9092"},
+		Topic:    "telemetry_topic",
+		GroupID:  "telemetry-processor-group", // Configure the Kafka Reader to join a scalable Consumer Group
+		MinBytes: 1,                           // 1 byte to instantly consume low-frequency individual pings
+		MaxBytes: 10e6,                        // 10MB
 	})
 	defer kafkaReader.Close()
 	fmt.Println("Processor listening for events on 'telemetry_topic'")
