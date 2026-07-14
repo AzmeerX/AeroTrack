@@ -6,3 +6,4 @@
 *.dylib
 server
 simulator
+.env
