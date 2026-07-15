@@ -6,7 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
+
+	// Import package to work with dotenv
+	"github.com/joho/godotenv"
+	"google.golang.org/genai"
 
 	// Import Kafka package
 	"github.com/redis/go-redis/v9"
@@ -28,6 +33,26 @@ type VehicleData struct {
 var db *sql.DB
 
 func main() {
+	// Load environment variables
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found")
+	}
+
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		log.Fatal("GEMINI_API_KEY is not set")
+	}
+
+	// Initialize Gemini Client
+	ctx := context.Background()
+	aiClient, aiErr := genai.NewClient(ctx, &genai.ClientConfig{APIKey: apiKey})
+	if aiErr != nil {
+		log.Fatalf("Failed to initialize Gemini Client: %v", aiErr)
+	}
+
+	// Use the current models API for content generation
+	aiModel := aiClient.Models
+
 	// Establish the persistent database connection pool
 	dsn := "postgres://user:password@127.0.0.1:5433/telemetry?sslmode=disable"
 	var err error
@@ -110,6 +135,36 @@ func main() {
 
 		if err != nil {
 			fmt.Printf("Redis Cache Save Failed for Vehicle %d: %v\n", vehicle.VehicleID, err)
+		}
+
+		// AI TRIGGER: Anomaly Detection
+		if vehicle.Speed > 80.0 {
+			fmt.Printf("[ALERT] Vehicle %d is speeding (%.1f km/h). Triggering AI Analysis...\n", vehicle.VehicleID, vehicle.Speed)
+
+			// Created goroutine so the AI call doesnt block consumer loop
+			go func(v VehicleData) {
+				prompt := fmt.Sprintf(
+					"You are an AI fleet safety analyst for a ride-hailing company. "+
+						"Vehicle %d is traveling at %.2f km/h at coordinates (Lat: %f, Lon: %f). "+
+						"Write a strict, 2-sentence risk assessment alert for the fleet manager.",
+					v.VehicleID, v.Speed, v.Latitude, v.Longitude,
+				)
+
+				aiCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				resp, err := aiModel.GenerateContent(aiCtx, "gemini-2.0-flash", []*genai.Content{
+					genai.NewContentFromText(prompt, genai.RoleUser),
+				}, nil)
+				if err != nil {
+					fmt.Printf("AI Analysis Failed for Vehicle %d: %v\n", v.VehicleID, err)
+					return
+				}
+
+				if resp != nil && len(resp.Candidates) > 0 {
+					fmt.Printf("\n[AI FLEET ANALYST - VEHICLE %d]\n%s\n\n", v.VehicleID, resp.Text())
+				}
+			}(vehicle)
 		}
 	}
 }
