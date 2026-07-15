@@ -21,7 +21,7 @@ type VehicleData struct {
 
 // Simulate a moving vehicle, changing its metrics every second
 func worker(vehicleChannel chan<- VehicleData, startData VehicleData) {
-	// Physical speed limitations of vehicles 
+	// Physical speed limitations of vehicles
 	const maxSpeed = 120.0
 	const minSpeed = 0.0
 	const maxAcceleration = 5.0
@@ -63,7 +63,7 @@ func main() {
 			VehicleID: i,                               // might change later, for now give vehicle id's using loop counter
 			Latitude:  24.86 + (rand.Float64() * 0.05), // Latitude according to Karachi's coordinates
 			Longitude: 67.00 + (rand.Float64() * 0.05), // Longitude according to Karachi's coordinates
-			Speed:     0.0,
+			Speed:     5.0,
 			Timestamp: time.Now(),
 		}
 

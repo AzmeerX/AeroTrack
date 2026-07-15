@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	// Import package to work with dotenv
@@ -32,26 +34,50 @@ type VehicleData struct {
 
 var db *sql.DB
 
+func buildFallbackAssessment(vehicleID int, speed float64, lat float64, lon float64) string {
+	return fmt.Sprintf(
+		"Vehicle %d is exceeding the safe operating threshold at %.2f km/h near coordinates (Lat: %.4f, Lon: %.4f). Immediate review is recommended because this pattern suggests aggressive driving and elevated safety risk.",
+		vehicleID, speed, lat, lon,
+	)
+}
+
+func loadEnvFile() {
+	candidates := []string{
+		".env",
+		filepath.Join("Processor", ".env"),
+		filepath.Join("..", "Processor", ".env"),
+	}
+
+	for _, candidate := range candidates {
+		if err := godotenv.Load(candidate); err == nil {
+			fmt.Printf("Loaded environment from %s\n", candidate)
+			return
+		}
+	}
+
+	log.Println("No .env file found")
+}
+
 func main() {
-	// Load environment variables
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found")
+	// Load environment variables from the Processor folder or the current working directory.
+	loadEnvFile()
+
+	apiKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+	var aiModel *genai.Models
+	if apiKey != "" {
+		// Initialize Gemini Client only when an API key is present.
+		ctx := context.Background()
+		aiClient, aiErr := genai.NewClient(ctx, &genai.ClientConfig{APIKey: apiKey})
+		if aiErr != nil {
+			log.Printf("Failed to initialize Gemini Client: %v", aiErr)
+		} else {
+			aiModel = aiClient.Models
+		}
 	}
 
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		log.Fatal("GEMINI_API_KEY is not set")
+	if aiModel == nil {
+		fmt.Println("Gemini client unavailable; using built-in fallback assessment for demo mode")
 	}
-
-	// Initialize Gemini Client
-	ctx := context.Background()
-	aiClient, aiErr := genai.NewClient(ctx, &genai.ClientConfig{APIKey: apiKey})
-	if aiErr != nil {
-		log.Fatalf("Failed to initialize Gemini Client: %v", aiErr)
-	}
-
-	// Use the current models API for content generation
-	aiModel := aiClient.Models
 
 	// Establish the persistent database connection pool
 	dsn := "postgres://user:password@127.0.0.1:5433/telemetry?sslmode=disable"
@@ -137,11 +163,32 @@ func main() {
 			fmt.Printf("Redis Cache Save Failed for Vehicle %d: %v\n", vehicle.VehicleID, err)
 		}
 
-		// AI TRIGGER: Anomaly Detection
+		// AI TRIGGER: Anomaly Detection with Redis Rate Limiting
 		if vehicle.Speed > 80.0 {
-			fmt.Printf("[ALERT] Vehicle %d is speeding (%.1f km/h). Triggering AI Analysis...\n", vehicle.VehicleID, vehicle.Speed)
+			cooldownKey := fmt.Sprintf("lock:ai_cooldown:%d", vehicle.VehicleID)
 
-			// Created goroutine so the AI call doesnt block consumer loop
+			// Try to set the key in Redis with a 2-minute expiration.
+			// SetNX returns true if the key did NOT exist and was successfully set.
+			ctxRedis, cancelRedis := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			isAllowed, err := rdb.SetNX(ctxRedis, cooldownKey, "active", 2*time.Minute).Result()
+			cancelRedis()
+
+			if err != nil {
+				fmt.Printf("Error communicating with Redis rate-limiter: %v\n", err)
+				// Fallback: Just print basic console alert without hitting Gemini
+				fmt.Printf("ALERT] Vehicle %d is speeding (%.1f km/h) [Cache Fallback]\n", vehicle.VehicleID, vehicle.Speed)
+				continue
+			}
+
+			if !isAllowed {
+				// Cooldown active. Log the speed but skip Gemini to protect API quota.
+				fmt.Printf("[ALERT] Vehicle %d is speeding (%.1f km/h) [AI Cooldown Active - Skipping Gemini]\n", vehicle.VehicleID, vehicle.Speed)
+				continue
+			}
+
+			// If we passed the rate-limiter, fire off the AI generation
+			fmt.Printf("[RATE-LIMITER] Request allowed for Vehicle %d. Triggering AI Analysis...\n", vehicle.VehicleID)
+
 			go func(v VehicleData) {
 				prompt := fmt.Sprintf(
 					"You are an AI fleet safety analyst for a ride-hailing company. "+
@@ -153,6 +200,12 @@ func main() {
 				aiCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
+				if aiModel == nil {
+					assessment := buildFallbackAssessment(v.VehicleID, v.Speed, v.Latitude, v.Longitude)
+					fmt.Printf("\n🤖 [AI FLEET ANALYST - VEHICLE %d]\n%s\n\n", v.VehicleID, assessment)
+					return
+				}
+
 				resp, err := aiModel.GenerateContent(aiCtx, "gemini-2.0-flash", []*genai.Content{
 					genai.NewContentFromText(prompt, genai.RoleUser),
 				}, nil)
@@ -162,7 +215,7 @@ func main() {
 				}
 
 				if resp != nil && len(resp.Candidates) > 0 {
-					fmt.Printf("\n[AI FLEET ANALYST - VEHICLE %d]\n%s\n\n", v.VehicleID, resp.Text())
+					fmt.Printf("\n🤖 [AI FLEET ANALYST - VEHICLE %d]\n%s\n\n", v.VehicleID, resp.Text())
 				}
 			}(vehicle)
 		}
