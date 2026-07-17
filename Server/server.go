@@ -109,7 +109,7 @@ func handleGetLocation(w http.ResponseWriter, r *http.Request) {
 func main() {
 	// Initialize the writer, point to KRaft Kafka container port
 	kafkaWriter = &kafka.Writer{
-		Addr:                   kafka.TCP("127.0.0.1:9092"),
+		Addr:                   kafka.TCP("kafka:9092"),
 		Topic:                  "telemetry_topic",
 		Balancer:               &kafka.LeastBytes{},
 		AllowAutoTopicCreation: true, // Force Kafka to build the topic on the first write
@@ -118,7 +118,7 @@ func main() {
 
 	// Initialize the Redis Client Connection Pool
 	rdb = redis.NewClient(&redis.Options{
-		Addr: "127.0.0.1:6379",
+		Addr: "redis:6379",
 	})
 
 	// Check if Redis is reachable on application start

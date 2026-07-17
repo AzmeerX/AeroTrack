@@ -80,7 +80,7 @@ func main() {
 	}
 
 	// Establish the persistent database connection pool
-	dsn := "postgres://user:password@127.0.0.1:5433/telemetry?sslmode=disable"
+	dsn := "postgres://user:password@postgres_db:5432/telemetry?sslmode=disable"
 	var err error
 	db, err = sql.Open("pgx", dsn)
 	if err != nil {
@@ -95,7 +95,7 @@ func main() {
 
 	// Configure the Kafka Consumer Reader
 	kafkaReader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  []string{"127.0.0.1:9092"},
+		Brokers:  []string{"kafka:9092"},
 		Topic:    "telemetry_topic",
 		GroupID:  "telemetry-processor-group", // Configure the Kafka Reader to join a scalable Consumer Group
 		MinBytes: 1,                           // 1 byte to instantly consume low-frequency individual pings
@@ -105,7 +105,7 @@ func main() {
 	fmt.Println("Processor listening for events on 'telemetry_topic'")
 
 	rdb := redis.NewClient(&redis.Options{
-		Addr: "127.0.0.1:6379", // Use 127.0.0.1 for WSL
+		Addr: "redis:6379",
 	})
 
 	ctxStartup, cancelStartup := context.WithTimeout(context.Background(), 2*time.Second)
