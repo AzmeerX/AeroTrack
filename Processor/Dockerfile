@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine
+FROM golang:1.26-alpine
 WORKDIR /app
 
 # Copy go.mod and go.sum first to leverage Docker caching
