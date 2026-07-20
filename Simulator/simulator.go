@@ -53,7 +53,7 @@ func worker(vehicleChannel chan<- VehicleData, startData VehicleData) {
 }
 
 func main() {
-	const url = "http://localhost:8080/telemetry"
+	const url = "http://52.140.116.154:8080/telemetry"
 	const totalVehicles = 100
 
 	vehicleChannel := make(chan VehicleData, totalVehicles)
