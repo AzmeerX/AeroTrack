@@ -52,45 +52,56 @@ func worker(vehicleChannel chan<- VehicleData, startData VehicleData) {
 	}
 }
 
+func buildVehicleData(index int) VehicleData {
+	return VehicleData{
+		VehicleID: index,
+		Latitude:  24.86 + (rand.Float64() * 0.05),
+		Longitude: 67.00 + (rand.Float64() * 0.05),
+		Speed:     5.0,
+		Timestamp: time.Now(),
+	}
+}
+
+func postTelemetry(url string, data VehicleData) error {
+	fmt.Println("Sending data for Vehicle:", data.VehicleID)
+
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		fmt.Println("Error marshalling JSON:", err)
+		return err
+	}
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Println("Error sending POST:", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+func startVehicleWorkers(vehicleChannel chan<- VehicleData, totalVehicles int, vehicleFactory func(int) VehicleData) {
+	for i := 0; i < totalVehicles; i++ {
+		startData := vehicleFactory(i)
+		go worker(vehicleChannel, startData)
+	}
+}
+
+func dispatchTelemetry(url string, vehicleChannel <-chan VehicleData, sender func(string, VehicleData) error) {
+	for data := range vehicleChannel {
+		go func(d VehicleData) {
+			_ = sender(url, d)
+		}(data)
+	}
+}
+
 func main() {
 	const url = "http://52.140.116.154:8080/telemetry"
 	const totalVehicles = 100
 
 	vehicleChannel := make(chan VehicleData, totalVehicles)
-
-	for i := range totalVehicles {
-		startData := VehicleData{
-			VehicleID: i,                               // might change later, for now give vehicle id's using loop counter
-			Latitude:  24.86 + (rand.Float64() * 0.05), // Latitude according to Karachi's coordinates
-			Longitude: 67.00 + (rand.Float64() * 0.05), // Longitude according to Karachi's coordinates
-			Speed:     5.0,
-			Timestamp: time.Now(),
-		}
-
-		go worker(vehicleChannel, startData)
-	}
-
-	// Fetch data from the channel and send it to POST/telemetry
-	for data := range vehicleChannel {
-		// Launch a goroutine for requesting the api concurrently
-		go func(d VehicleData) {
-			fmt.Println("Sending data for Vehicle:", d.VehicleID)
-
-			jsonData, err := json.Marshal(d)
-			if err != nil {
-				fmt.Println("Error marshalling JSON:", err)
-				return
-			}
-
-			resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
-			if err != nil {
-				fmt.Println("Error sending POST:", err)
-				return
-			}
-
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-		}(data)
-
-	}
+	startVehicleWorkers(vehicleChannel, totalVehicles, buildVehicleData)
+	dispatchTelemetry(url, vehicleChannel, postTelemetry)
 }
